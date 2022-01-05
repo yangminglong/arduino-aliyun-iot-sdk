@@ -8,7 +8,7 @@ typedef void (*poniter_fun)(JsonVariant ele); //定义一个函数指针
 
 typedef struct poniter_desc
 {
-  char *key;
+  String key;
   poniter_fun fp;
 } poniter_desc, *p_poniter_desc;
 
@@ -47,52 +47,52 @@ public:
    * @param passphrase wifi密码
    */
   static void begin(Client &espClient,
-                    const char *_productKey,
-                    const char *_deviceName,
-                    const char *_deviceSecret,
-                    const char *_region);
+                    const String& _productKey,
+                    const String& _deviceName,
+                    const String& _deviceSecret,
+                    const String& _region);
 
   /**
    * 发送数据
    * @param param 字符串形式的json 数据，例如 {"${key}":"${value}"}
    */
-  static void send(const char *param);
+  static void send(const String& param);
   /**
    * 发送 float 格式数据
    * @param key 数据的 key
    * @param number 数据的值
    */
-  static void send(char *key, float number);
+  static void send(const String& key, float number);
   /**
    * 发送 int 格式数据
    * @param key 数据的 key
    * @param number 数据的值
    */
-  static void send(char *key, int number);
+  static void send(const String& key, int number);
   /**
    * 发送 double 格式数据
    * @param key 数据的 key
    * @param number 数据的值
    */
-  static void send(char *key, double number);
+  static void send(const String& key, double number);
   /**
    * 发送 string 格式数据
    * @param key 数据的 key
    * @param text 数据的值
    */
-  static void send(char *key, char *text);
+  static void send(const String& key, const String& text);
 
   /**
    * 发送事件到云平台（附带数据）
    * @param eventId 事件名，在阿里云物模型中定义好的
    * @param param 字符串形式的json 数据，例如 {"${key}":"${value}"}
    */
-  static void sendEvent(const char *eventId, const char *param);
+  static void sendEvent(const String& eventId, const String& param);
   /**
    * 发送事件到云平台（空数据）
    * @param eventId 事件名，在阿里云物模型中定义好的
    */
-  static void sendEvent(const char *eventId);
+  static void sendEvent(const String& eventId);
 
   /**
    * 绑定回调，所有云服务下发的数据都会进回调
@@ -103,17 +103,17 @@ public:
    * 绑定事件回调，云服务下发的特定事件会进入回调
    * @param eventId 事件名
    */
-  // static void bindEvent(const char * eventId, MQTT_CALLBACK_SIGNATURE);
+  // static void bindEvent(const String&  eventId, MQTT_CALLBACK_SIGNATURE);
   /**
    * 绑定属性回调，云服务下发的数据包含此 key 会进入回调，用于监听特定数据的下发
    * @param key 物模型的key
    */
-  static int bindData(char *key, poniter_fun fp);
+  static int bindData(const String& key, poniter_fun fp);
   /**
    * 卸载某个 key 的所有回调（慎用）
    * @param key 物模型的key
    */
-  static int unbindData(char *key);
+  static int unbindData(const String& key);
 
   /**
    * 发布topic
@@ -121,29 +121,29 @@ public:
    * @param payload 要发布的消息体
    * @param retained 是否需要开启保留
    */
-  static boolean publish(const char *topic, const char *payload, bool retained);
+  static boolean publish(const String& topic, const String& payload, bool retained);
   
-  static boolean publish(const char *topic, const char *payload);
+  static boolean publish(const String& topic, const String& payload);
 
   /**
    * 发布阿里云用户自定义Topic类
    * @param topicSuffix topic后缀，即user后面的部分
    * @param payload 发布的消息
    */
-  static boolean publishUser(const char *topicSuffix, const char *payload);
+  static boolean publishUser(const String& topicSuffix, const String& payload);
 
   /**
    * 订阅阿里云用户自定义Topic类
    * @param topicSuffix topic后缀，即user后面的部分
    * @param fp 回调函数
    */
-  static boolean subscribeUser(const char *topicSuffix, poniter_fun fp);
+  static boolean subscribeUser(const String& topicSuffix, poniter_fun fp);
   
   /**
    * 取消订阅阿里云用户自定义Topic类
    * @param topicSuffix topic后缀，即user后面的部分
    */
-  static boolean unsubscribeUser(char *topicSuffix);
+  static boolean unsubscribeUser(const String& topicSuffix);
 
   /**
    * 订阅topic
@@ -151,20 +151,20 @@ public:
    * @param qos 
    * @param fp 回调函数
    */
-  static boolean subscribe(char* topic, uint8_t qos, poniter_fun fp);
+  static boolean subscribe(const String& topic, uint8_t qos, poniter_fun fp);
 
   /**
    * 订阅topic
    * @param topic 订阅的topic
    * @param fp 回调函数
    */
-  static boolean subscribe(char* topic, poniter_fun fp);
+  static boolean subscribe(const String& topic, poniter_fun fp);
 
   /**
    * 取消订阅指定topic
    * @param topic 订阅的topic
    */
-  static boolean unsubscribe(char* topic);
+  static boolean unsubscribe(const String& topic);
 
 
 };

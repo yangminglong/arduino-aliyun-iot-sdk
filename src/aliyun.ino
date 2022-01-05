@@ -1,4 +1,3 @@
-#include <Arduino.h>
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3)
 #include <WiFi.h>
 #else
@@ -8,7 +7,7 @@
 static WiFiClient espClient;
 #include <ArduinoJson.h>
 
-#include <AliyunIoTSDK.h>
+#include <../src/AliyunIoTSDK.h>
 AliyunIoTSDK iot;
 
 #define PRODUCT_KEY "xxxxx"

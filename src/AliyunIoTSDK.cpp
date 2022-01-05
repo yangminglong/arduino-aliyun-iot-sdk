@@ -1,16 +1,20 @@
 
 #include "AliyunIoTSDK.h"
 #include <PubSubClient.h>
-#include <SHA256.h>
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3)
+#include <mbedtls/md.h>
+#else
+#include <SHA256.h> // Crypto
+#endif
 
 #define CHECK_INTERVAL 10000
 #define MESSAGE_BUFFER_SIZE 10
 #define RETRY_CRASH_COUNT 5
 
-static const char *deviceName = NULL;
-static const char *productKey = NULL;
-static const char *deviceSecret = NULL;
-static const char *region = NULL;
+static String deviceName ;
+static String productKey ;
+static String deviceSecret ;
+static String region ;
 
 struct DeviceProperty
 {
@@ -43,18 +47,39 @@ char AliyunIoTSDK::ALINK_TOPIC_PROP_SET[150] = "";
 char AliyunIoTSDK::ALINK_TOPIC_EVENT[150] = "";
 char AliyunIoTSDK::ALINK_TOPIC_USER[150] = "";
 
-static String hmac256(const String &signcontent, const String &ds)
+static String hmac256(const String &signcontent, const String &secret)
 {
-    byte hashCode[SHA256HMAC_SIZE];
+    unsigned char hashCode[SHA256HMAC_SIZE];
+
+    const String& key = secret.c_str();
+    size_t keySize = secret.length();
+
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32C3)
+
+    mbedtls_md_context_t sha_ctx;
+
+    mbedtls_md_init(&sha_ctx);
+
+    memset(hashCode, 0x00, sizeof(hashCode));
+
+    int ret = mbedtls_md_setup(&sha_ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+    if (ret != 0) {
+        printf("mbedtls_md_setup() returned -0x%04x\n", -ret);
+    }
+
+    mbedtls_md_hmac_starts(&sha_ctx, (const unsigned char*)key, keySize);
+    mbedtls_md_hmac_update(&sha_ctx, (const unsigned char*)signcontent.c_str(), signcontent.length());
+    mbedtls_md_hmac_finish(&sha_ctx, hashCode);
+
+    mbedtls_md_free(&sha_ctx);
+#else
     SHA256 sha256;
-
-    const char *key = ds.c_str();
-    size_t keySize = ds.length();
-
-    sha256.resetHMAC(key, keySize);
+    sha256.resetHMAC(key.c_str(), keySize);
     sha256.update((const byte *)signcontent.c_str(), signcontent.length());
-    sha256.finalizeHMAC(key, keySize, hashCode, sizeof(hashCode));
+    sha256.finalizeHMAC(key.c_str(), keySize, hashCode, sizeof(hashCode));
+#endif
 
+    // 转为十六进制字符
     String sign = "";
     for (byte i = 0; i < SHA256HMAC_SIZE; ++i)
     {
@@ -67,7 +92,7 @@ static String hmac256(const String &signcontent, const String &ds)
 
 static void parmPass(JsonVariant parm)
 {
-    //    const char *method = parm["method"];
+    //    const String& method = parm["method"];
     for (int i = 0; i < DATA_CALLBACK_SIZE; i++)
     {
         if (poniter_array[i].key)
@@ -81,40 +106,37 @@ static void parmPass(JsonVariant parm)
     }
 }
 // 所有云服务的回调都会首先进入这里，例如属性下发
-static void callback(char *topic, byte *payload, unsigned int length)
+static void callback(const String& topic, byte *payload, unsigned int length)
 {
     Serial.print("Message arrived [");
     Serial.print(topic);
     Serial.print("] ");
     payload[length] = '\0';
-    Serial.println((char *)payload);
+    Serial.println((const String& )payload);
 
     StaticJsonDocument<200> doc;
     DeserializationError error = deserializeJson(doc, payload); //反序列化JSON数据
 
-    if (strstr(topic, AliyunIoTSDK::ALINK_TOPIC_PROP_SET))
+    if (topic.indexOf(AliyunIoTSDK::ALINK_TOPIC_PROP_SET) != -1)
     {
         if (!error) //检查反序列化是否成功
         {
             parmPass(doc.as<JsonVariant>()); //将参数传递后打印输出
         }
-    }else if(strstr(topic, AliyunIoTSDK::ALINK_TOPIC_USER))
+    } else if(topic.indexOf(AliyunIoTSDK::ALINK_TOPIC_USER) != -1)
     {
         // 自定义订阅回调
         for (int i = 0; i < DATA_CALLBACK_SIZE; i++)
         {
-            if (poniter_array[i].key)
-            {   
-                if(strcmp(topic, poniter_array[i].key) == 0)
+            if(topic == poniter_array[i].key)
                 poniter_array[i].fp(doc.as<JsonVariant>());
-            }
         }
     }
     else
     {
         for (int i = 0; i < DATA_CALLBACK_SIZE; i++)
         {
-            if (poniter_array[i].key && strcmp(topic, poniter_array[i].key) == 0)
+            if (topic == poniter_array[i].key)
             {
                 poniter_array[i].fp(doc.as<JsonVariant>());
             }
@@ -157,11 +179,14 @@ void AliyunIoTSDK::mqttCheckConnect()
 }
 
 void AliyunIoTSDK::begin(Client &espClient,
-                         const char *_productKey,
-                         const char *_deviceName,
-                         const char *_deviceSecret,
-                         const char *_region)
+                         const String& _productKey,
+                         const String& _deviceName,
+                         const String& _deviceSecret,
+                         const String& _region)
 {
+    if (client) {
+        delete client;
+    }
 
     client = new PubSubClient(espClient);
     client->setBufferSize(1024);
@@ -173,7 +198,7 @@ void AliyunIoTSDK::begin(Client &espClient,
     long times = millis();
     String timestamp = String(times);
 
-    sprintf(clientId, "%s|securemode=3,signmethod=hmacsha256,timestamp=%s|", deviceName, timestamp.c_str());
+    sprintf(clientId, "%s|securemode=3,signmethod=hmacsha256,timestamp=%s|", deviceName.c_str(), timestamp.c_str());
 
     String signcontent = "clientId";
     signcontent += deviceName;
@@ -188,13 +213,13 @@ void AliyunIoTSDK::begin(Client &espClient,
 
     strcpy(mqttPwd, pwd.c_str());
 
-    sprintf(mqttUsername, "%s&%s", deviceName, productKey);
-    sprintf(ALINK_TOPIC_PROP_POST, "/sys/%s/%s/thing/event/property/post", productKey, deviceName);
-    sprintf(ALINK_TOPIC_PROP_SET, "/sys/%s/%s/thing/service/property/set", productKey, deviceName);
-    sprintf(ALINK_TOPIC_EVENT, "/sys/%s/%s/thing/event", productKey, deviceName);
-    sprintf(ALINK_TOPIC_USER, "/%s/%s/user", productKey, deviceName);
+    sprintf(mqttUsername, "%s&%s", deviceName.c_str(), productKey.c_str());
+    sprintf(ALINK_TOPIC_PROP_POST, "/sys/%s/%s/thing/event/property/post", productKey.c_str(), deviceName.c_str());
+    sprintf(ALINK_TOPIC_PROP_SET, "/sys/%s/%s/thing/service/property/set", productKey.c_str(), deviceName.c_str());
+    sprintf(ALINK_TOPIC_EVENT, "/sys/%s/%s/thing/event", productKey.c_str(), deviceName.c_str());
+    sprintf(ALINK_TOPIC_USER, "/%s/%s/user", productKey.c_str(), deviceName.c_str());
 
-    sprintf(domain, "%s.iot-as-mqtt.%s.aliyuncs.com", productKey, region);
+    sprintf(domain, "%s.iot-as-mqtt.%s.aliyuncs.com", productKey.c_str(), region.c_str());
     client->setServer(domain, MQTT_PORT); /* 连接WiFi之后，连接MQTT服务器 */
     client->setCallback(callback);
 
@@ -212,18 +237,18 @@ void AliyunIoTSDK::loop()
     }
 }
 
-void AliyunIoTSDK::sendEvent(const char *eventId, const char *param)
+void AliyunIoTSDK::sendEvent(const String& eventId, const String& param)
 {
     char topicKey[156];
-    sprintf(topicKey, "%s/%s/post", ALINK_TOPIC_EVENT, eventId);
+    sprintf(topicKey, "%s/%s/post", ALINK_TOPIC_EVENT, eventId.c_str());
     char jsonBuf[1024];
-    sprintf(jsonBuf, ALINK_EVENT_BODY_FORMAT, param, eventId);
+    sprintf(jsonBuf, ALINK_EVENT_BODY_FORMAT, param.c_str(), eventId.c_str());
     Serial.println(jsonBuf);
     boolean d = client->publish(topicKey, jsonBuf);
     Serial.print("publish:0 成功:");
     Serial.println(d);
 }
-void AliyunIoTSDK::sendEvent(const char *eventId)
+void AliyunIoTSDK::sendEvent(const String& eventId)
 {
     sendEvent(eventId, "{}");
 }
@@ -280,7 +305,7 @@ void AliyunIoTSDK::sendBuffer()
     send(buffer.c_str());
 }
 
-void addMessageToBuffer(char *key, String value)
+void addMessageToBuffer(const String& key, String value)
 {
     int i;
     for (i = 0; i < MESSAGE_BUFFER_SIZE; i++)
@@ -293,39 +318,38 @@ void addMessageToBuffer(char *key, String value)
         }
     }
 }
-void AliyunIoTSDK::send(const char *param)
+void AliyunIoTSDK::send(const String& param)
 {
-
     char jsonBuf[1024];
-    sprintf(jsonBuf, ALINK_BODY_FORMAT, param);
+    sprintf(jsonBuf, ALINK_BODY_FORMAT, param.c_str());
     Serial.println(jsonBuf);
     boolean d = client->publish(ALINK_TOPIC_PROP_POST, jsonBuf);
     Serial.print("publish:0 成功:");
     Serial.println(d);
 }
-void AliyunIoTSDK::send(char *key, float number)
+void AliyunIoTSDK::send(const String& key, float number)
 {
     addMessageToBuffer(key, String(number));
     messageBufferCheck();
 }
-void AliyunIoTSDK::send(char *key, int number)
+void AliyunIoTSDK::send(const String& key, int number)
 {
     addMessageToBuffer(key, String(number));
     messageBufferCheck();
 }
-void AliyunIoTSDK::send(char *key, double number)
+void AliyunIoTSDK::send(const String& key, double number)
 {
     addMessageToBuffer(key, String(number));
     messageBufferCheck();
 }
 
-void AliyunIoTSDK::send(char *key, char *text)
+void AliyunIoTSDK::send(const String& key, const String& text)
 {
     addMessageToBuffer(key, "\"" + String(text) + "\"");
     messageBufferCheck();
 }
 
-int AliyunIoTSDK::bindData(char *key, poniter_fun fp)
+int AliyunIoTSDK::bindData(const String& key, poniter_fun fp)
 {
     int i;
     for (i = 0; i < DATA_CALLBACK_SIZE; i++)
@@ -340,14 +364,14 @@ int AliyunIoTSDK::bindData(char *key, poniter_fun fp)
     return -1;
 }
 
-int AliyunIoTSDK::unbindData(char *key)
+int AliyunIoTSDK::unbindData(const String& key)
 {
     int i;
     for (i = 0; i < DATA_CALLBACK_SIZE; i++)
     {
-        if (!strcmp(poniter_array[i].key, key))
+        if (poniter_array[i].key.equals(key))
         {
-            poniter_array[i].key = NULL;
+            poniter_array[i].key.clear();
             poniter_array[i].fp = NULL;
             return 0;
         }
@@ -356,35 +380,32 @@ int AliyunIoTSDK::unbindData(char *key)
 }
 
 
-boolean AliyunIoTSDK::publish(const char *topic, const char *payload, bool retained){
-    return client->publish(topic, payload, retained);
+boolean AliyunIoTSDK::publish(const String& topic, const String& payload, bool retained){
+    return client->publish(topic.c_str(), payload.c_str(), retained);
 }
 
-boolean AliyunIoTSDK::publish(const char *topic, const char *payload){
-    return client->publish(topic, payload);
+boolean AliyunIoTSDK::publish(const String& topic, const String& payload){
+    return client->publish(topic.c_str(), payload.c_str());
 }
 
-boolean AliyunIoTSDK::publishUser(const char *topicSuffix, const char *payload){
-    char topic[150]; 
-    strcpy(topic, ALINK_TOPIC_USER);
-    return AliyunIoTSDK::publish(strcat(topic, topicSuffix), payload);
+boolean AliyunIoTSDK::publishUser(const String& topicSuffix, const String& payload){
+    String topic = ALINK_TOPIC_USER;
+    return AliyunIoTSDK::publish(topic + topicSuffix, payload);
 }
 
-boolean AliyunIoTSDK::subscribeUser(const char *topicSuffix, poniter_fun fp){
-    char *topic = new char[150];
-    strcpy(topic, ALINK_TOPIC_USER);
-    return AliyunIoTSDK::subscribe(strcat(topic, topicSuffix), fp);
+boolean AliyunIoTSDK::subscribeUser(const String& topicSuffix, poniter_fun fp){
+    String topic = ALINK_TOPIC_USER;    
+    return AliyunIoTSDK::subscribe(topic + topicSuffix, fp);
 }
 
-boolean AliyunIoTSDK::unsubscribeUser(char *topicSuffix){
-    char *topic = new char[150];
-    strcpy(topic, ALINK_TOPIC_USER);
-    return AliyunIoTSDK::unsubscribe(strcat(topic, topicSuffix));
+boolean AliyunIoTSDK::unsubscribeUser(const String& topicSuffix){
+    String topic = ALINK_TOPIC_USER;
+    return AliyunIoTSDK::unsubscribe(topic + topicSuffix);
 }
 
-boolean AliyunIoTSDK::subscribe(char* topic, uint8_t qos, poniter_fun fp){
+boolean AliyunIoTSDK::subscribe(const String& topic, uint8_t qos, poniter_fun fp){
     boolean ret = false;
-    if(client->subscribe(topic, qos)){
+    if(client->subscribe(topic.c_str(), qos)){
         ret = true;
         bindData(topic, fp);
         Serial.print("subcribe: ");
@@ -393,13 +414,13 @@ boolean AliyunIoTSDK::subscribe(char* topic, uint8_t qos, poniter_fun fp){
     return ret;
 }
 
-boolean AliyunIoTSDK::subscribe(char* topic, poniter_fun fp){
+boolean AliyunIoTSDK::subscribe(const String& topic, poniter_fun fp){
     return subscribe(topic, 0, fp);
 }
 
-boolean AliyunIoTSDK::unsubscribe(char* topic){
+boolean AliyunIoTSDK::unsubscribe(const String& topic){
     boolean ret = false;
-    if(client->unsubscribe(topic)){
+    if(client->unsubscribe(topic.c_str())){
         ret = true;
         unbindData(topic);
         Serial.print("unsubcribe: ");
